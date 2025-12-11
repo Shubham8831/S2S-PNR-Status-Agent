@@ -1,44 +1,36 @@
-from fastapi import FastAPI, File, UploadFile, HTTPException
+from fastapi import FastAPI, File, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
 import speech_recognition as sr
 import re
 from gtts import gTTS
+
 import os
 import tempfile
 from langdetect import detect, DetectorFactory
+
 from dotenv import load_dotenv
 from langchain_groq import ChatGroq
-import requests
-import json
-from selenium import webdriver
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
-from selenium.webdriver.chrome.service import Service
-from selenium.webdriver.chrome.options import Options
-from webdriver_manager.chrome import ChromeDriverManager
-import time
-import random
+
 import wave
 import audioop
 import subprocess
 
 from status_extractor import check_pnr_combined, generate_pnr_summary
 
-# Set seed for consistent language detection
+# Set seed for language detection
 DetectorFactory.seed = 0
 
-# Load environment variables
+
 load_dotenv()
 key = os.getenv("GROQ_API_KEY")
 model = ChatGroq(model="llama-3.3-70b-versatile", api_key=key)
 
-# Initialize FastAPI app
+
 app = FastAPI()
 
-# Add CORS middleware
+# CORS 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -47,24 +39,24 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Request/Response Models
+
 class TextInput(BaseModel):
     text: str
 
 class PNRInput(BaseModel):
     pnr: str
-    language: str = "english"  # Optional language for response
+    language: str = "english" 
 
 class TTSRequest(BaseModel):
     text: str
     language: str
 
 
-# ===================== AUDIO CONVERSION FUNCTIONS =====================
+
 
 def convert_to_wav(input_file: str, output_file: str) -> tuple[bool, str]:
     """
-    Convert any audio input to WAV PCM signed 16-bit, mono, 16000 Hz using ffmpeg.
+    Convert any audio input to WAV PCM signed 16-bit, mono, 16000 Hz using ffmpeg
     Returns (success, stderr_text).
     """
     try:
@@ -127,7 +119,7 @@ def convert_to_wav_basic(input_file, output_file):
 
 
 
-# ===================== UTILITY FUNCTIONS =====================
+
 
 def detect_language(text):
     try:
@@ -151,13 +143,13 @@ def extract_pnr_from_text(text):
     
     # Extract all digit sequences
     digit_sequences = re.findall(r'\d+', text)
-    
+ 
     # First try: Find any 10-digit sequence
     for seq in digit_sequences:
         if len(seq) == 10:
             return seq
     
-    # Second try: Combine consecutive digit groups to form 10 digits
+    # Second try: Combine consecutive digit groups to form 10 digits 
     all_digits = ''.join(digit_sequences)
     if len(all_digits) >= 10:
         # Take first 10 digits
@@ -168,7 +160,6 @@ def extract_pnr_from_text(text):
 
 
 
-# ===================== API ENDPOINTS =====================
 @app.post("/speech_to_text")
 async def speech_to_text(audio: UploadFile = File(...)):
     """Convert speech audio to text"""
@@ -267,7 +258,6 @@ async def extract_pnr(data: TextInput):
 async def get_pnr_status(data: PNRInput):
     """Get PNR status and generate AI summary - merged endpoint"""
     try:
-        # Step 1: Fetch PNR data using combined method (API + Selenium)
         pnr_data = check_pnr_combined(data.pnr)
         
         if not pnr_data:
@@ -276,10 +266,8 @@ async def get_pnr_status(data: PNRInput):
                 "error": "Unable to fetch PNR status. Please verify the PNR number."
             }
         
-        # Step 2: Generate AI summary from the PNR data
         summary = generate_pnr_summary(pnr_data)
         
-        # Step 3: Return everything together
         return {
             "success": True,
             "pnr_data": pnr_data,
@@ -300,7 +288,6 @@ async def text_to_speech(data: TTSRequest):
     temp_audio_path = None
     
     try:
-        # Map language to gTTS language code
         lang_map = {
             'hindi': 'hi',
             'english': 'en'
@@ -334,9 +321,9 @@ async def text_to_speech(data: TTSRequest):
 @app.get("/")
 async def root():
     """Root endpoint"""
-    return {"message": "Railway Ticket Status Agent API is running"}
+    return {"message": "PNR voice to voice agent running"}
 
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host="0.0.0.0", port=8000) 

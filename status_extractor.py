@@ -16,9 +16,10 @@ import os
 import json
 
 load_dotenv()
-key = os.getenv("GROQ_API_KEY")
-model = ChatGroq(model="llama-3.3-70b-versatile", api_key=key)
+model_key = os.getenv("GROQ_API_KEY")
+model = ChatGroq(model="llama-3.3-70b-versatile", api_key=model_key)
 
+rapid_api_key = os.getenv("RAPID_API_KEY")
 
 # first try with rapid api 
 def check_pnr_rapidapi(pnr_number):
@@ -27,7 +28,7 @@ def check_pnr_rapidapi(pnr_number):
     url = f"https://irctc-indian-railway-pnr-status.p.rapidapi.com/getPNRStatus/{pnr_number}"
     
     headers = {
-        "x-rapidapi-key": "bed019e806mshd2f80db29f2db8ep1c2a63jsne6c04ab81f0c",
+        "x-rapidapi-key": rapid_api_key,
         "x-rapidapi-host": "irctc-indian-railway-pnr-status.p.rapidapi.com"
     }
     
@@ -104,11 +105,9 @@ def create_stealth_driver():
 
 
 
-
+# Parse the page and extract ticket information
 def parse_ticket_data(page_text, pnr_number):
-    """
-    Parse the page text to extract structured ticket information
-    """
+
     ticket_data = {
         'pnr': pnr_number,
         'train_number': None,
@@ -178,7 +177,7 @@ def parse_ticket_data(page_text, pnr_number):
     
     return ticket_data
 
-
+# finding pnr data by selenium automation
 def check_pnr_automation(pnr_number):
     print("\n 2: trying Selenium automation ...")
     
@@ -302,7 +301,7 @@ def check_pnr_automation(pnr_number):
         print("Browser closed")
 
 
-# Main Combined Function
+# Main Function
 def check_pnr_combined(pnr_number):
     
     print(f" Checking PNR: {pnr_number}")
@@ -346,31 +345,35 @@ def check_pnr_combined(pnr_number):
 
 
 
-
-def generate_pnr_summary(json_data):
+# fn takes the json data and language and give a summary in particular language
+def generate_pnr_summary(json_data , lang):
     
     
     if not json_data:
-        return "❌ No PNR data available to summarize."
+        return "No PNR data available to summarize."
     
-    # Convert JSON to string for the LLM
+    # JSON to string for the LLM
     json_str = json.dumps(json_data, indent=2)
     
-    # Create prompt for the LLM
+    # prompt
     prompt = f"""You are an Indian Railway PNR assistant.
 
-Output must be extremely short, clear and spoken-friendly because it will be sent to a text-to-speech engine.
+Output must be extremely short, clear and spoken-friendly because it will be sent to a text-to-speech engine
 
 Rules:
 - DO NOT repeat the PNR number.
 - Give all ticket details together in one short paragraph.
-- Include: train name and number,name of passagers, class, from–to stations, date, chart status, passenger booking status, and a very short probability of getting confirmed. only if ticket is not confirmed(like 'high', 'medium', or 'low').
+- Include: train name and number, class, from–to stations, date, chart status, passenger booking status, and a very short probability of getting confirmed. only if ticket is not confirmed(like 'high', 'medium', or 'low').
 - Keep sentences tiny and natural.
 - End with a friendly greeting like: "Thank you and have a safe journey."
-- note : do not make the answer if there is no information
+- note : output in this {lang} language only
+- also use long forms rather then short form (for bsbs -> varanshi, 3E -> 3rd ac)
+
 
 PNR Data:
 {json_str}
+
+- VERY IMPORTANT NOTE : do not add any extra information from your side, if not present in PNR data
 
 Summary:"""
     
@@ -381,7 +384,7 @@ Summary:"""
         return summary
         
     except Exception as e:
-        return f"⚠️ Error generating summary: {str(e)}\n\nRaw data available - check JSON output."
+        return f" Error generating summary: {str(e)}\n\nRaw data available - check JSON output."
 
 
 
@@ -392,8 +395,6 @@ if __name__ == "__main__":
     PNR_NUMBER = "2608290686"
     
     result = check_pnr_combined(PNR_NUMBER)
-    llm_result = generate_pnr_summary(result)
+    llm_result = generate_pnr_summary(result, "en")
     
     print(llm_result)
-
-
