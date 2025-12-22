@@ -2,277 +2,410 @@ from fastapi import FastAPI, File, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
-import speech_recognition as sr
-import re
-from gtts import gTTS
 
+import re
+from gtts import gTTS # text to speech
 import os
 import tempfile
 from langdetect import detect, DetectorFactory
+from typing import Optional, List, Dict
 
 from dotenv import load_dotenv
-from langchain_groq import ChatGroq
+from langchain_groq import ChatGroq #llm
 
-import wave
-import audioop
-import subprocess
+import whisper
+
+whisper_model = whisper.load_model("medium") # speech to text
 
 from status_extractor import check_pnr_combined, generate_pnr_summary
 
-# Set seed for language detection
-DetectorFactory.seed = 0
-
+DetectorFactory.seed = 0 # this is set to get same output for same text at each run 
 
 load_dotenv()
 key = os.getenv("GROQ_API_KEY")
 model = ChatGroq(model="llama-3.3-70b-versatile", api_key=key)
 
-
 app = FastAPI()
 
-# CORS 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["*"], # allow all for now 
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
+# dict to maintain state
+sessions = {}
 
+
+
+#pydantic data validations for endpoints 
 class TextInput(BaseModel):
     text: str
 
 class PNRInput(BaseModel):
     pnr: str
-    language: str = "english" 
+    language: str = "english"
 
 class TTSRequest(BaseModel):
     text: str
     language: str
 
+class SessionRequest(BaseModel):
+    session_id: str
+    audio: Optional[UploadFile] = None
+
+# mappings for hindi 
+DIGIT_MAPPINGS = {
+    'शून्य': '0', 'shuny': '0', 'shunya': '0',
+    'एक': '1', 'ek': '1',
+    'दो': '2', 'do': '2',
+    'तीन': '3', 'teen': '3', 'tin': '3',
+    'चार': '4', 'char': '4', 'chaar': '4',
+    'पाँच': '5', 'paanch': '5', 'panch': '5', 'punch': '5',
+    'छह': '6', 'chhah': '6', 'chha': '6', 'chhe': '6',
+    'सात': '7', 'saat': '7', 'sat': '7',
+    'आठ': '8', 'aath': '8', 'ath': '8',
+    'नौ': '9', 'nau': '9', 'no': '9',
+    'zero': '0', 'one': '1', 'two': '2', 'three': '3', 'four': '4',
+    'five': '5', 'six': '6', 'seven': '7', 'eight': '8', 'nine': '9',
+    # Bengali
+    'শূন্য': '0', 'shunno': '0',
+    'এক': '1', 'æk': '1',
+    'দুই': '2', 'dui': '2',
+    'তিন': '3', 'tin': '3',
+    'চার': '4', 'char': '4',
+    'পাঁচ': '5', 'pãch': '5',
+    'ছয়': '6', 'choy': '6',
+    'সাত': '7', 'sat': '7',
+    'আট': '8', 'at': '8', 'aat': '8',
+    'নয়': '9', 'noy': '9',
+   
+    # Tamil
+    'பூஜ்ஜியம்': '0', 'poojiyam': '0',
+    'ஒன்று': '1', 'onru': '1', 'ondru': '1',
+    'இரண்டு': '2', 'irandu': '2',
+    'மூன்று': '3', 'moondru': '3', 'munru': '3',
+    'நான்கு': '4', 'naangu': '4', 'nanku': '4',
+    'ஐந்து': '5', 'ainthu': '5',
+    'ஆறு': '6', 'aaru': '6',
+    'ஏழு': '7', 'ezhu': '7',
+    'எட்டு': '8', 'ettu': '8',
+    'ஒன்பது': '9', 'onbathu': '9',
+   
+    # Telugu
+    'సున్న': '0', 'sunna': '0',
+    'ఒకటి': '1', 'okati': '1',
+    'రెండు': '2', 'rendu': '2',
+    'మూడు': '3', 'moodu': '3',
+    'నాలుగు': '4', 'naalugu': '4',
+    'ఐదు': '5', 'aidu': '5',
+    'ఆరు': '6', 'aaru': '6',
+    'ఏడు': '7', 'edu': '7', 'yedu': '7',
+    'ఎనిమిది': '8', 'enimidi': '8',
+    'తొమ్మిది': '9', 'tommidi': '9',
+   
+    # Marathi
+    'शून्य': '0',
+    'एक': '1',
+    'दोन': '2', 'don': '2',
+    'तीन': '3',
+    'चार': '4',
+    'पाच': '5', 'paach': '5',
+    'सहा': '6', 'saha': '6',
+    'सात': '7',
+    'आठ': '8',
+    'नऊ': '9', 'nau': '9',
+   
+    # Gujarati
+    'શૂન્ય': '0',
+    'એક': '1',
+    'બે': '2', 'be': '2',
+    'ત્રણ': '3', 'tran': '3',
+    'ચાર': '4',
+    'પાંચ': '5',
+    'છ': '6', 'chha': '6',
+    'સાત': '7',
+    'આઠ': '8',
+    'નવ': '9', 'nav': '9',
+   
+    # Kannada
+    'ಸೊನ್ನೆ': '0', 'sonne': '0',
+    'ಒಂದು': '1', 'ondu': '1',
+    'ಎರಡು': '2', 'eradu': '2',
+    'ಮೂರು': '3', 'mooru': '3',
+    'ನಾಲ್ಕು': '4', 'naalku': '4',
+    'ಐದು': '5', 'aidu': '5',
+    'ಆರು': '6', 'aaru': '6',
+    'ಏಳು': '7', 'elu': '7',
+    'ಎಂಟು': '8', 'entu': '8',
+    'ಒಂಬತ್ತು': '9', 'ombattu': '9',
+   
+    # Malayalam
+    'പൂജ്യം': '0', 'poojyam': '0',
+    'ഒന്ന്': '1', 'onnu': '1',
+    'രണ്ട്': '2', 'randu': '2',
+    'മൂന്ന്': '3', 'moonnu': '3',
+    'നാല്': '4', 'naalu': '4',
+    'അഞ്ച്': '5', 'anchu': '5',
+    'ആറ്': '6', 'aaru': '6',
+    'ഏഴ്': '7', 'ezhu': '7',
+    'എട്ട്': '8', 'ettu': '8',
+    'ഒമ്പത്': '9', 'ombathu': '9',
+   
+    # Punjabi
+    'ਸਿਫ਼ਰ': '0', 'sifar': '0',
+    'ਇੱਕ': '1', 'ikk': '1',
+    'ਦੋ': '2',
+    'ਤਿੰਨ': '3', 'tinn': '3',
+    'ਚਾਰ': '4',
+    'ਪੰਜ': '5', 'panj': '5',
+    'ਛੇ': '6', 'chhe': '6',
+    'ਸੱਤ': '7', 'satt': '7',
+    'ਅੱਠ': '8', 'atth': '8',
+    'ਨੌਂ': '9', 'naun': '9',
+}
+
+DIGIT_MAPPING_LOWER = {k.lower(): v for k, v in DIGIT_MAPPINGS.items()}
 
 
-
-def convert_to_wav(input_file: str, output_file: str) -> tuple[bool, str]:
-    """
-    Convert any audio input to WAV PCM signed 16-bit, mono, 16000 Hz using ffmpeg
-    Returns (success, stderr_text).
-    """
-    try:
-        # Build ffmpeg command to produce PCM S16 LE wav, mono, 16000 Hz
-        cmd = [
-            "ffmpeg",
-            "-y",                 # overwrite
-            "-nostdin",
-            "-loglevel", "error", # only show errors
-            "-i", input_file,
-            "-ac", "1",           # mono
-            "-ar", "16000",       # sampling rate
-            "-acodec", "pcm_s16le",
-            output_file
-        ]
-        proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
-        if proc.returncode != 0:
-            return False, proc.stderr or "ffmpeg failed with return code {}".format(proc.returncode)
-        # quick sanity check: file exists and non-empty
-        if not os.path.exists(output_file) or os.path.getsize(output_file) < 100:
-            return False, "Converted file missing or too small"
-        return True, ""
-    except FileNotFoundError:
-        return False, "ffmpeg not found; please install ffmpeg and make sure it's in PATH"
-    except Exception as e:
-        return False, str(e)
-
-
-
-def convert_to_wav_basic(input_file, output_file):
-    """Basic WAV conversion fallback"""
-    try:
-        # Read the input file as binary
-        with open(input_file, 'rb') as f:
-            audio_data = f.read()
-        
-        # Try to open as WAV and resave with correct parameters
-        with wave.open(input_file, 'rb') as wav_in:
-            params = wav_in.getparams()
-            frames = wav_in.readframes(params.nframes)
-            
-            # Convert to mono if stereo
-            if params.nchannels == 2:
-                frames = audioop.tomono(frames, params.sampwidth, 1, 1)
-                channels = 1
-            else:
-                channels = params.nchannels
-            
-            # Write new WAV file with correct format
-            with wave.open(output_file, 'wb') as wav_out:
-                wav_out.setnchannels(channels)
-                wav_out.setsampwidth(params.sampwidth)
-                wav_out.setframerate(params.framerate)
-                wav_out.writeframes(frames)
-        
-        return True
-    except Exception as e:
-        print(f"Basic WAV conversion error: {e}")
-        return False
-
-
-
-
-
+# given text this fn detects the language
 def detect_language(text):
     try:
         lang_code = detect(text)
-        lang_map = {'hi': 'hindi', 'en': 'english', 'ur': 'hindi'}
-        return lang_map.get(lang_code, 'english')
+        lang_map = {
+            'hi': 'hindi', 'en': 'english', 'ur': 'urdu', 'pa': 'punjabi',
+            'bn': 'bengali', 'te': 'telugu', 'mr': 'marathi', 'ta': 'tamil',
+            'gu': 'gujarati', 'kn': 'kannada', 'ml': 'malayalam'
+        }
+        return lang_map.get(lang_code, 'english')# default set eng
     except:
         return 'english'
 
 
+#this funtion converts spoken digits to numbers
+def convert_spoken_digits_to_numbers(text):
+    words = text.split()
+    converted_words = []
+    for word in words:
+        cleaned_word = re.sub(r'[^\w\s]', '', word)
+        digit = DIGIT_MAPPING_LOWER.get(cleaned_word.lower())
+        if digit:
+            converted_words.append(digit)
+        else:
+            converted_words.append(word)
+    return ' '.join(converted_words)
+
+
+#this funtion extracts pnr number from the text
 def extract_pnr_from_text(text):
-    """Extract 10-digit PNR from text, handling pauses and natural speech"""
-    # Remove common words and normalize
-    text = text.lower()
-    
-    # Replace common speech patterns
-    text = text.replace('pause', ' ')
-    text = text.replace('wait', ' ')
-    text = text.replace('uh', ' ')
-    text = text.replace('um', ' ')
-    
-    # Extract all digit sequences
-    digit_sequences = re.findall(r'\d+', text)
- 
-    # First try: Find any 10-digit sequence
+    text_with_digits = convert_spoken_digits_to_numbers(text)
+    text_normalized = text_with_digits.lower()
+    fillers = ['pause', 'wait', 'uh', 'um', 'है', 'ha', 'hain', 'ka', 'ki', 'ke']
+    for filler in fillers:
+        text_normalized = text_normalized.replace(filler, ' ')
+    digit_sequences = re.findall(r'\d+', text_normalized)
     for seq in digit_sequences:
         if len(seq) == 10:
             return seq
-    
-    # Second try: Combine consecutive digit groups to form 10 digits 
     all_digits = ''.join(digit_sequences)
     if len(all_digits) >= 10:
-        # Take first 10 digits
         return all_digits[:10]
-    
     return None
 
+# this creates the state dict if not present and if present it gets it
+def get_or_create_session(session_id: str) -> Dict:
+    
+    if session_id not in sessions:
+        sessions[session_id] = {
+            "pnr": None, # at start/first run it is set to none
+            "last_status": None,
+            "history": [],
+            "language": "english" #default language
+        }
+    return sessions[session_id]
 
 
+# taeks input session data and language and then return response
+def generate_contextual_response(text: str, session: Dict, detected_lang: str) -> tuple:
+    
+    # extract pnr number
+    new_pnr = extract_pnr_from_text(text)
+    
+    # update session language
+    session["language"] = detected_lang
+    
+    # if new pnr comes
+    if new_pnr:
+        session["pnr"] = new_pnr
+        session["last_status"] = None
+        return ("", True)  # Fetch status for new PNR
+    
+    # if no pnr in session then ask for pnr from user
+    if not session["pnr"]:
+        lang_prompts = {
+            'hindi': 'कृपया अपना PNR नंबर बताइए',
+            'english': 'Please provide your PNR number',
+            'tamil': 'தயவுசெய்து உங்கள் PNR எண்ணைச் சொல்லுங்கள்',
+            'telugu': 'దయచేసి మీ PNR నంబర్‌ను చెప్పండి',
+            'bengali': 'অনুগ্রহ করে আপনার PNR নম্বর বলুন',
+            'marathi': 'कृपया तुमचा PNR नंबर सांगा',
+            'gujarati': 'કૃપા કરીને તમારો PNR નંબર આપો',
+            'kannada': 'ದಯವಿಟ್ಟು ನಿಮ್ಮ PNR ಸಂಖ್ಯೆಯನ್ನು ಹೇಳಿ',
+            'malayalam': 'ദയവായി നിങ്ങളുടെ PNR നമ്പർ നൽകുക',
+            'punjabi': 'ਕਿਰਪਾ ਕਰਕੇ ਆਪਣਾ PNR ਨੰਬਰ ਦੱਸੋ',
+            'urdu': 'براہ کرم اپنا PNR نمبر بتائیں'
+        }
+        return (lang_prompts.get(detected_lang, lang_prompts['english']), False)
+    
+    # if pnr is there but no status
+    if not session["last_status"]:
+        return ("", True)  # Fetch status
+    
+    # if ave pnr and status then ask llm for response
+    return (generate_followup_answer(text, session, detected_lang), False)
 
-@app.post("/speech_to_text")
-async def speech_to_text(audio: UploadFile = File(...)):
-    """Convert speech audio to text"""
+
+#this function generate answer for the follow-up questions 
+def generate_followup_answer(question: str, session: Dict, language: str) -> str:
+  
+    
+    import json
+    status_data = session["last_status"] # take last status and pnr from the state
+    pnr = session["pnr"]
+    
+    # make conversation history
+    history_context = ""
+    if session["history"]:
+        history_context = "\n\nPrevious conversation:\n"
+        for item in session["history"][-3:]:
+            history_context += f"User: {item['user']}\nAssistant: {item['assistant']}\n"
+    
+    prompt = f"""You are an Indian Railway PNR assistant helping users with follow-up questions.
+
+Current context:
+PNR: {pnr}
+Language: {language}
+{history_context}
+
+Ticket Status (JSON):
+{json.dumps(status_data, indent=2)}
+
+User's question: "{question}"
+
+Instructions:
+- Answer the user's question directly based on the ticket status data
+- Keep response SHORT and conversational (2-3 sentences max)
+- Use {language} language
+- Be natural and friendly
+- If data not available, say so politely
+- Do NOT repeat information unnecessarily
+
+Answer:"""
+
+    try:
+        response = model.invoke(prompt)
+        answer = response.content.strip()
+        
+        # Add to history
+        session["history"].append({
+            "user": question,
+            "assistant": answer
+        })
+        
+        return answer
+    except Exception as e:
+        return f"Sorry, I couldn't process your question. Error: {str(e)}"
+
+
+#main endpoint 
+@app.post("/unified_voice_input")
+async def unified_voice_input(audio: UploadFile = File(...), session_id: str = "default"): #takes audio
+    
     temp_audio_path = None
-    converted_audio_path = None
     
     try:
-        # derive extension from original filename if possible (fallback to .bin)
+        # either get or create session data
+        session = get_or_create_session(session_id)
+        
+        # speech to text 
         orig_ext = os.path.splitext(getattr(audio, "filename", "") or "")[1].lower() or ".bin"
+        
         with tempfile.NamedTemporaryFile(delete=False, suffix=orig_ext) as temp_audio:
             content = await audio.read()
             if not content or len(content) < 10:
-                return JSONResponse(status_code=400, content={"success": False, "error": "Uploaded audio is empty or too small"})
+                return JSONResponse(
+                    status_code=400,
+                    content={"success": False, "error": "Audio file is empty or too small"}
+                )
             temp_audio.write(content)
             temp_audio_path = temp_audio.name
         
-        # set output WAV path
-        converted_audio_path = temp_audio_path + ".wav"
-        
-        # Convert to WAV using ffmpeg (recommended)
-        conversion_success, conv_err = convert_to_wav(temp_audio_path, converted_audio_path)
-        
-        if not conversion_success:
-            # don't silently fallback to the original file – fail clearly so user/deploy knows to fix conversion
-            return JSONResponse(status_code=400, content={
-                "success": False,
-                "error": "Conversion to WAV failed. Details: " + conv_err
-            })
-        
-        # Initialize recognizer
-        recognizer = sr.Recognizer()
-        recognizer.energy_threshold = 300
-        recognizer.dynamic_energy_threshold = True
-        
-        # Load audio file (now guaranteed to be a proper WAV)
-        with sr.AudioFile(converted_audio_path) as source:
-            recognizer.adjust_for_ambient_noise(source, duration=0.5)
-            audio_data = recognizer.record(source)
-        
-        # Try to recognize speech
-        text = None
-        try:
-            text = recognizer.recognize_google(audio_data, language='en-IN')
-        except Exception:
-            try:
-                text = recognizer.recognize_google(audio_data, language='hi-IN')
-            except Exception:
-                try:
-                    text = recognizer.recognize_google(audio_data)
-                except Exception as e:
-                    raise Exception(f"Could not understand audio: {str(e)}")
-        
-        if not text:
-            raise Exception("No speech detected in audio")
-        
-        detected_language = detect_language(text)
-        
-        return {"success": True, "text": text, "language": detected_language}
-        
-    except Exception as e:
-        return JSONResponse(status_code=500, content={"success": False, "error": str(e)})
-    finally:
-        # Clean up temp files
-        for p in (temp_audio_path, converted_audio_path):
-            if p and os.path.exists(p):
-                try:
-                    os.unlink(p)
-                except:
-                    pass
-
-
-@app.post("/extract_pnr")
-async def extract_pnr(data: TextInput):
-    """Extract PNR number from text"""
-    try:
-        pnr = extract_pnr_from_text(data.text)
-        
-        if pnr:
-            return {
-                "success": True,
-                "pnr": pnr
-            }
-        else:
-            return {
-                "success": False,
-                "error": "No valid PNR found in the text"
-            }
-    except Exception as e:
-        return JSONResponse(
-            status_code=500,
-            content={"success": False, "error": str(e)}
+        # Transcribe
+        result = whisper_model.transcribe(
+            temp_audio_path,
+            language=None,
+            fp16=False,
+            verbose=False,
+            word_timestamps=True
         )
-
-
-@app.post("/get_pnr_status")
-async def get_pnr_status(data: PNRInput):
-    """Get PNR status and generate AI summary - merged endpoint"""
-    try:
-        pnr_data = check_pnr_combined(data.pnr)
         
-        if not pnr_data:
-            return {
-                "success": False,
-                "error": "Unable to fetch PNR status. Please verify the PNR number."
-            }
+        text = result["text"].strip()
+        detected_lang = result.get("language", "en")
         
-        summary = generate_pnr_summary(pnr_data)
+        # Map language
+        whisper_lang_map = {
+            'en': 'english', 'hi': 'hindi', 'ur': 'urdu', 'pa': 'punjabi',
+            'bn': 'bengali', 'te': 'telugu', 'mr': 'marathi', 'ta': 'tamil',
+            'gu': 'gujarati', 'kn': 'kannada', 'ml': 'malayalam'
+        }
+        user_language = whisper_lang_map.get(detected_lang, 'english')
+        
+        # Fallback detection
+        try:
+            text_detected_lang = detect_language(text)
+            if text_detected_lang != 'english':
+                user_language = text_detected_lang
+        except:
+            pass
+        
+        # generate contextual response
+        response_text, should_fetch = generate_contextual_response(text, session, user_language)
+        
+        # fetch pnr data 
+        if should_fetch and session["pnr"]:
+            pnr_data = check_pnr_combined(session["pnr"])
+            
+            if not pnr_data:
+                return {
+                    "success": False,
+                    "error": "Unable to fetch PNR status",
+                    "transcribed_text": text,
+                    "detected_language": user_language,
+                    "session_id": session_id
+                }
+            
+            session["last_status"] = pnr_data
+            
+            # generate summary
+            response_text = generate_pnr_summary(pnr_data, user_language)
+            
+            # add to dict data
+            session["history"].append({
+                "user": text,
+                "assistant": response_text
+            })
         
         return {
             "success": True,
-            "pnr_data": pnr_data,
-            "summary": summary,
-            "language": data.language
+            "transcribed_text": text,
+            "detected_language": user_language,
+            "pnr": session["pnr"],
+            "response": response_text,
+            "pnr_data": session["last_status"],
+            "session_id": session_id,
+            "has_context": len(session["history"]) > 0
         }
         
     except Exception as e:
@@ -280,30 +413,35 @@ async def get_pnr_status(data: PNRInput):
             status_code=500,
             content={"success": False, "error": str(e)}
         )
+    
+    finally:
+        if temp_audio_path and os.path.exists(temp_audio_path):
+            try:
+                os.unlink(temp_audio_path)
+            except:
+                pass
 
 
+
+#endpoint to convert text to audio with gtts :)
 @app.post("/text_to_speech")
 async def text_to_speech(data: TTSRequest):
-    """Convert text to speech using gTTS"""
     temp_audio_path = None
     
     try:
         lang_map = {
-            'hindi': 'hi',
-            'english': 'en'
+            'english': 'en', 'hindi': 'hi', 'urdu': 'ur', 'punjabi': 'pa',
+            'bengali': 'bn', 'telugu': 'te', 'marathi': 'mr', 'tamil': 'ta',
+            'gujarati': 'gu', 'kannada': 'kn', 'malayalam': 'ml'
         }
         
-        lang_code = lang_map.get(data.language, 'en')
-        
-        # Generate speech
+        lang_code = lang_map.get(data.language.lower(), 'en')
         tts = gTTS(text=data.text, lang=lang_code, slow=False)
         
-        # Save to temporary file
         with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as temp_audio:
             tts.save(temp_audio.name)
             temp_audio_path = temp_audio.name
         
-        # Return audio file
         return FileResponse(
             temp_audio_path,
             media_type="audio/mpeg",
@@ -318,12 +456,35 @@ async def text_to_speech(data: TTSRequest):
         )
 
 
+
+#endpoint to clear session data
+@app.post("/clear_session")
+async def clear_session(session_id: str = "default"):
+    """Clear session data"""
+    if session_id in sessions:
+        del sessions[session_id]
+    return {"success": True, "message": "Session cleared"}
+
+
+
+#endpoint to get current session data
+@app.get("/session_status")
+async def session_status(session_id: str = "default"):
+    """gives current session details"""
+    session = get_or_create_session(session_id)
+    return {
+        "session_id": session_id,
+        "has_pnr": session["pnr"] is not None,
+        "pnr": session["pnr"],
+        "has_status": session["last_status"] is not None,
+        "language": session["language"],
+        "history_count": len(session["history"])
+    }
+
 @app.get("/")
 async def root():
-    """Root endpoint"""
-    return {"message": "PNR voice to voice agent running"}
-
+    return {"message": "S2S PNR Agent"}
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000) 
+    uvicorn.run(app, host="0.0.0.0", port=8000)

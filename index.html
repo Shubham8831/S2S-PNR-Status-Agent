@@ -83,9 +83,23 @@
             box-shadow: 0 20px 60px rgba(0,0,0,0.4);
             border: 1px solid rgba(255, 255, 255, 0.18);
             animation: fadeInUp 0.8s ease;
-            display: flex;
-            flex-direction: column;
-            justify-content: flex-start;
+        }
+
+        .session-badge {
+            background: rgba(100, 200, 100, 0.2);
+            border: 1px solid rgba(100, 200, 100, 0.4);
+            border-radius: 20px;
+            padding: 6px 12px;
+            color: #90ee90;
+            font-size: 12px;
+            text-align: center;
+            margin-bottom: 20px;
+            display: none;
+        }
+
+        .session-badge.active {
+            display: block;
+            animation: fadeIn 0.5s ease;
         }
 
         .mic-container {
@@ -130,6 +144,11 @@
             cursor: not-allowed;
         }
 
+        .mic-button.speaking {
+            background: linear-gradient(135deg, #10b981, #059669);
+            animation: pulse 1.5s infinite;
+        }
+
         @keyframes pulse {
             0%, 100% {
                 box-shadow: 0 10px 40px rgba(220, 38, 38, 0.5);
@@ -152,6 +171,24 @@
             min-height: 28px;
             text-shadow: 1px 1px 4px rgba(0,0,0,0.5);
             margin-top: 5px;
+        }
+
+        .language-badge {
+            background: rgba(255, 215, 0, 0.2);
+            border: 1px solid rgba(255, 215, 0, 0.4);
+            border-radius: 20px;
+            padding: 8px 16px;
+            color: #ffd700;
+            font-size: 13px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            display: none;
+            animation: fadeIn 0.5s ease;
+        }
+
+        .language-badge.visible {
+            display: inline-block;
         }
 
         .status-details {
@@ -227,18 +264,15 @@
             font-size: 14px;
         }
 
-        .status-details::-webkit-scrollbar {
-            width: 6px;
-        }
-
-        .status-details::-webkit-scrollbar-track {
-            background: rgba(255, 255, 255, 0.1);
+        .footer-note {
+            background: rgba(255, 215, 0, 0.1);
+            border: 1px solid rgba(255, 215, 0, 0.3);
             border-radius: 10px;
-        }
-
-        .status-details::-webkit-scrollbar-thumb {
-            background: rgba(255, 215, 0, 0.5);
-            border-radius: 10px;
+            padding: 15px;
+            margin-top: 10px;
+            color: rgba(255, 255, 255, 0.85);
+            font-size: 13px;
+            line-height: 1.6;
         }
 
         .error-message {
@@ -258,47 +292,93 @@
         .error-message.visible {
             display: block;
         }
+
+        .conversation-history-container {
+            background: rgba(0, 0, 0, 0.2);
+            border: 1px solid rgba(255, 215, 0, 0.3);
+            border-radius: 15px;
+            padding: 15px;
+            margin-top: 20px;
+            width: 100%;
+            max-width: 100%;
+        }
+
+        .clear-history-btn {
+            background: rgba(220, 38, 38, 0.3);
+            border: 1px solid rgba(220, 38, 38, 0.5);
+            color: #fecaca;
+            padding: 4px 12px;
+            border-radius: 12px;
+            cursor: pointer;
+            font-size: 11px;
+            transition: all 0.3s ease;
+        }
+
+        .clear-history-btn:hover {
+            background: rgba(220, 38, 38, 0.5);
+            transform: translateY(-1px);
+        }
     </style>
 </head>
 <body>
     <div class="background"></div>
-    
+   
     <div class="container">
         <div class="header">
             <div class="logo">🚂</div>
             <h1>Indian Railway</h1>
-            <p class="subtitle">Voice PNR Status Assistant</p>
+            <p class="subtitle">AI Voice Assistant with Context Memory</p>
         </div>
 
         <div class="card">
+            <div class="session-badge" id="sessionBadge">
+                🔄 Session Active • PNR: <span id="sessionPnr">-</span>
+            </div>
+
             <div class="mic-container">
                 <button class="mic-button" id="micButton">
                     <span class="mic-icon">🎤</span>
                 </button>
-                
+               
                 <div class="status-text" id="statusText">
-                    Click to speak your PNR
+                    Click to speak your PNR or ask a question
                 </div>
 
+                <div class="language-badge" id="languageBadge"></div>
+
                 <div class="loader" id="loader"></div>
-                
+               
                 <div class="status-details" id="statusDetails"></div>
                 <div class="error-message" id="errorMessage"></div>
+
+                <div class="conversation-history-container">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                        <div style="color: #ffd700; font-size: 14px; font-weight: 600;">💬 Conversation</div>
+                        <button onclick="clearSession()" class="clear-history-btn">Clear Session</button>
+                    </div>
+                    <div id="conversationHistory">
+                        <div style="color: rgba(255,255,255,0.5); font-size: 13px;">No conversation yet</div>
+                    </div>
+                </div>
             </div>
         </div>
 
-        <div class="footer"></div>
+        
     </div>
 
     <audio id="responseAudio" style="display: none;"></audio>
 
     <script>
         const API_BASE = 'http://localhost:8000';
-        
+       
         let mediaRecorder;
         let audioChunks = [];
         let isRecording = false;
         let isProcessing = false;
+        let isSpeaking = false;
+        let detectedLanguage = 'english';
+        let sessionId = 'user_' + Date.now();
+        let conversationHistory = [];
 
         const micButton = document.getElementById('micButton');
         const statusText = document.getElementById('statusText');
@@ -306,9 +386,32 @@
         const errorMessage = document.getElementById('errorMessage');
         const loader = document.getElementById('loader');
         const responseAudio = document.getElementById('responseAudio');
+        const languageBadge = document.getElementById('languageBadge');
+        const sessionBadge = document.getElementById('sessionBadge');
+        const sessionPnr = document.getElementById('sessionPnr');
 
         function updateStatus(text) {
             statusText.textContent = text;
+        }
+
+        function showLanguageBadge(lang) {
+            const langNames = {
+                'hindi': 'हिंदी', 'english': 'English', 'tamil': 'தமிழ்',
+                'telugu': 'తెలుగు', 'bengali': 'বাংলা', 'marathi': 'मराठी',
+                'gujarati': 'ગુજરાતી', 'kannada': 'ಕನ್ನಡ', 'malayalam': 'മലയാളം',
+                'punjabi': 'ਪੰਜਾਬੀ', 'urdu': 'اردو'
+            };
+           
+            languageBadge.textContent = `🌐 ${langNames[lang] || lang}`;
+            languageBadge.classList.add('visible');
+            detectedLanguage = lang;
+        }
+
+        function updateSessionBadge(pnr) {
+            if (pnr) {
+                sessionPnr.textContent = pnr;
+                sessionBadge.classList.add('active');
+            }
         }
 
         function showLoader() {
@@ -335,14 +438,50 @@
             errorMessage.classList.remove('visible');
         }
 
-        function resetUI() {
-            hideLoader();
-            hideError();
-            statusDetails.classList.remove('visible');
-            micButton.classList.remove('recording', 'processing');
-            updateStatus('Click to speak your PNR');
-            isProcessing = false;
-            isRecording = false;
+        function displayConversationHistory() {
+            const historyContainer = document.getElementById('conversationHistory');
+            if (!conversationHistory.length) {
+                historyContainer.innerHTML = '<div style="color: rgba(255,255,255,0.5); font-size: 13px;">No conversation yet</div>';
+                return;
+            }
+
+            let historyHTML = '<div style="max-height: 250px; overflow-y: auto;">';
+            conversationHistory.slice(-5).reverse().forEach((item, index) => {
+                historyHTML += `
+                    <div style="background: rgba(0,0,0,0.2); padding: 10px; border-radius: 8px; margin-bottom: 8px; font-size: 12px;">
+                        <div style="color: rgba(255,255,255,0.9); margin-bottom: 4px;">👤 "${item.user}"</div>
+                        <div style="color: rgba(100,200,100,0.9); margin-top: 4px;">🤖 ${item.assistant.substring(0, 100)}${item.assistant.length > 100 ? '...' : ''}</div>
+                    </div>
+                `;
+            });
+            historyHTML += '</div>';
+            historyContainer.innerHTML = historyHTML;
+        }
+
+        async function clearSession() {
+            if (confirm('Clear session and start fresh?')) {
+                // Stop any playing audio
+                if (responseAudio.src && !responseAudio.paused) {
+                    responseAudio.pause();
+                    responseAudio.currentTime = 0;
+                }
+                
+                try {
+                    await fetch(`${API_BASE}/clear_session?session_id=${sessionId}`, {
+                        method: 'POST'
+                    });
+                } catch (error) {
+                    console.log('Session clear error:', error);
+                }
+                
+                conversationHistory = [];
+                sessionId = 'user_' + Date.now();
+                sessionBadge.classList.remove('active');
+                displayConversationHistory();
+                updateStatus('Session cleared. Click to speak your PNR');
+                statusDetails.classList.remove('visible');
+                languageBadge.classList.remove('visible');
+            }
         }
 
         async function startRecording() {
@@ -357,10 +496,8 @@
 
                 mediaRecorder.onstop = async () => {
                     const recordedAudioBlob = new Blob(audioChunks, { type: 'audio/webm' });
-                    
                     stream.getTracks().forEach(track => track.stop());
-                    
-                    await processAudio(recordedAudioBlob);
+                    await processVoiceInput(recordedAudioBlob);
                 };
 
                 mediaRecorder.start();
@@ -369,7 +506,6 @@
                 updateStatus('🔴 Recording... Click to stop');
             } catch (error) {
                 showError('❌ Microphone access denied. Please allow microphone access.');
-                resetUI();
             }
         }
 
@@ -379,139 +515,140 @@
                 isRecording = false;
                 micButton.classList.remove('recording');
                 micButton.classList.add('processing');
-                updateStatus('Processing your request...');
+                updateStatus('Processing...');
                 showLoader();
             }
         }
 
-        async function processAudio(audioBlob) {
+        function stopAudioPlayback() {
+            if (responseAudio.src && !responseAudio.paused) {
+                responseAudio.pause();
+                responseAudio.currentTime = 0;
+                isSpeaking = false;
+                micButton.classList.remove('speaking');
+            }
+        }
+
+        async function processVoiceInput(audioBlob) {
             isProcessing = true;
 
             try {
-                // Step 1: Speech to Text
-                updateStatus('🎧 Converting speech to text...');
+                updateStatus('🎧 Processing your voice...');
+               
                 const formData = new FormData();
                 formData.append('audio', audioBlob, 'audio.webm');
+                formData.append('session_id', sessionId);
 
-                const sttResponse = await fetch(`${API_BASE}/speech_to_text`, {
+                const response = await fetch(`${API_BASE}/unified_voice_input`, {
                     method: 'POST',
                     body: formData
                 });
 
-                const sttData = await sttResponse.json();
-                
-                if (!sttData.success) {
-                    throw new Error(sttData.error || 'Speech recognition failed');
+                const data = await response.json();
+               
+                if (!data.success) {
+                    throw new Error(data.error || 'Failed to process request');
                 }
 
-                const transcribedText = sttData.text;
-                const detectedLanguage = sttData.language || 'english';
-                showDetails(`🗣️ You said: "${transcribedText}"`);
-
-                // Step 2: Extract PNR
-                updateStatus('🔍 Extracting PNR number...');
-                const pnrResponse = await fetch(`${API_BASE}/extract_pnr`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ text: transcribedText })
-                });
-
-                const pnrData = await pnrResponse.json();
+                // Update UI
+                showLanguageBadge(data.detected_language);
                 
-                if (!pnrData.success) {
-                    throw new Error('No valid PNR found. Please speak your 10-digit PNR number clearly.');
+                if (data.pnr) {
+                    updateSessionBadge(data.pnr);
                 }
 
-                const pnrNumber = pnrData.pnr;
-                showDetails(`🗣️ You said: "${transcribedText}"<br>🎫 PNR Found: ${pnrNumber}`);
-
-                // Step 3: Get PNR Status (includes AI summary)
-                updateStatus('🚂 Fetching ticket details...');
-                const statusResponse = await fetch(`${API_BASE}/get_pnr_status`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ 
-                        pnr: pnrNumber,
-                        language: detectedLanguage 
-                    })
-                });
-
-                const statusData = await statusResponse.json();
+                // Display response
+                let detailsHTML = `🗣️ You said: "${data.transcribed_text}"<br><br>`;
                 
-                if (!statusData.success) {
-                    throw new Error(statusData.error || 'Unable to fetch PNR status. Please check the PNR number.');
+                if (data.pnr_data && data.pnr_data.data) {
+                    const pnrInfo = data.pnr_data.data;
+                    detailsHTML += `🎫 PNR: ${data.pnr}<br>`;
+                    detailsHTML += `🚂 Train: ${pnrInfo.trainName || 'N/A'} (${pnrInfo.trainNumber || 'N/A'})<br>`;
+                    detailsHTML += `📍 ${pnrInfo.sourceStation || 'N/A'} → ${pnrInfo.destinationStation || 'N/A'}<br>`;
+                    detailsHTML += `📅 Date: ${pnrInfo.dateOfJourney || 'N/A'}<br><br>`;
                 }
 
-                // Extract data from nested structure
-                const pnrInfo = statusData.pnr_data;
-                const summary = statusData.summary;
-                const responseLanguage = statusData.language || detectedLanguage;
-
-                // Format ticket details for display
-                let detailsHTML = `🎫 PNR: ${pnrNumber}<br><br>`;
-                
-                if (pnrInfo && pnrInfo.data) {
-                    const data = pnrInfo.data;
-                    detailsHTML += `🚂 Train: ${data.trainName || 'N/A'} (${data.trainNumber || 'N/A'})<br>`;
-                    detailsHTML += `📍 From: ${data.sourceStation || 'N/A'} → To: ${data.destinationStation || 'N/A'}<br>`;
-                    detailsHTML += `📅 Journey Date: ${data.dateOfJourney || 'N/A'}<br>`;
-                    detailsHTML += `💺 Class: ${data.journeyClass || 'N/A'}<br>`;
-                    detailsHTML += `📋 Chart Status: ${data.chartStatus || 'N/A'}<br><br>`;
-                    
-                    if (data.passengerList && data.passengerList.length > 0) {
-                        detailsHTML += `👥 Passengers:<br>`;
-                        data.passengerList.forEach((p, i) => {
-                            detailsHTML += `${i + 1}. ${p.currentStatusDetails || p.currentStatus || 'N/A'}<br>`;
-                        });
-                    }
+                if (data.response) {
+                    detailsHTML += `🤖 Response:<br>${data.response.replace(/\n/g, '<br>')}`;
                 }
 
                 showDetails(detailsHTML);
 
-                // Step 4: Text to Speech (using the summary from backend)
-                if (summary) {
+                // Add to conversation history
+                conversationHistory.push({
+                    user: data.transcribed_text,
+                    assistant: data.response
+                });
+                displayConversationHistory();
+
+                // Convert to speech
+                if (data.response) {
                     updateStatus('🔊 Converting to speech...');
+                   
                     const ttsResponse = await fetch(`${API_BASE}/text_to_speech`, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({
-                            text: summary,
-                            language: responseLanguage
+                            text: data.response,
+                            language: data.detected_language
                         })
                     });
 
                     if (!ttsResponse.ok) {
-                        throw new Error('Text-to-speech conversion failed');
+                        throw new Error('Text-to-speech failed');
                     }
 
-                    const responseAudioBlob = await ttsResponse.blob();
-                    const audioUrl = URL.createObjectURL(responseAudioBlob);
-                    
+                    const audioBlob = await ttsResponse.blob();
+                    const audioUrl = URL.createObjectURL(audioBlob);
+                   
                     responseAudio.src = audioUrl;
                     await responseAudio.play();
-
-                    updateStatus('✅ Playing response...');
                     
+                    isSpeaking = true;
+                    micButton.classList.remove('processing');
+                    micButton.classList.add('speaking');
+                    updateStatus(`🔊 Speaking... Click to interrupt`);
+                   
                     responseAudio.onended = () => {
-                        setTimeout(resetUI, 2000);
+                        isSpeaking = false;
+                        micButton.classList.remove('speaking');
+                        updateStatus('✅ Click to ask another question');
+                        isProcessing = false;
                     };
                 } else {
-                    updateStatus('✅ Status fetched successfully');
-                    setTimeout(resetUI, 5000);
+                    updateStatus('✅ Click to continue');
+                    micButton.classList.remove('processing');
+                    isProcessing = false;
                 }
 
             } catch (error) {
                 console.error('Error:', error);
                 showError(`❌ ${error.message}`);
-                setTimeout(resetUI, 5000);
+                micButton.classList.remove('processing', 'speaking');
+                isProcessing = false;
+            } finally {
+                hideLoader();
             }
         }
 
         micButton.addEventListener('click', () => {
-            if (isProcessing) {
+            // Priority 1: If speaking, interrupt
+            if (isSpeaking) {
+                stopAudioPlayback();
+                updateStatus('🛑 Interrupted. Click to speak again');
+                setTimeout(() => {
+                    updateStatus('Click to speak');
+                    isProcessing = false;
+                }, 1500);
                 return;
             }
 
+            // Priority 2: If processing (not recording), ignore
+            if (isProcessing && !isRecording) {
+                return;
+            }
+
+            // Priority 3: Normal recording toggle
             if (!isRecording) {
                 startRecording();
             } else {
@@ -519,7 +656,13 @@
             }
         });
 
-        resetUI();
+        window.addEventListener('beforeunload', () => {
+            if (responseAudio.src) {
+                URL.revokeObjectURL(responseAudio.src);
+            }
+        });
+
+        displayConversationHistory();
     </script>
 </body>
 </html>

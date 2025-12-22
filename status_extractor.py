@@ -346,7 +346,7 @@ def check_pnr_combined(pnr_number):
 
 
 # fn takes the json data and language and give a summary in particular language
-def generate_pnr_summary(json_data , lang):
+def generate_pnr_summary(json_data, lang, conversation_history=None):
     
     
     if not json_data:
@@ -354,6 +354,14 @@ def generate_pnr_summary(json_data , lang):
     
     # JSON to string for the LLM
     json_str = json.dumps(json_data, indent=2)
+    
+    # Build context from conversation history if provided
+    context_str = ""
+    if conversation_history and len(conversation_history) > 0:
+        context_str = "\n\nPrevious conversations:\n"
+        for item in conversation_history[-3:]:  # Last 3 conversations for context
+            context_str += f"- User asked about PNR {item.get('pnr', 'N/A')} in {item.get('language', 'english')}\n"
+        context_str += "\nUse this context to provide a more personalized response if relevant.\n"
     
     # prompt
     prompt = f"""You are an Indian Railway PNR assistant.
@@ -363,13 +371,13 @@ Output must be extremely short, clear and spoken-friendly because it will be sen
 Rules:
 - DO NOT repeat the PNR number.
 - Give all ticket details together in one short paragraph.
-- Include: train name and number, class, from–to stations, date, chart status, passenger booking status, and a very short probability of getting confirmed. only if ticket is not confirmed(like 'high', 'medium', or 'low').
+- Include: train name and number, class, from—to stations, date, chart status, passenger booking status, and a very short probability of getting confirmed. only if ticket is not confirmed(like 'high', 'medium', or 'low').
 - Keep sentences tiny and natural.
 - End with a friendly greeting like: "Thank you and have a safe journey."
 - note : output in this {lang} language only
 - also use long forms rather then short form (for bsbs -> varanshi, 3E -> 3rd ac)
 
-
+{context_str}
 PNR Data:
 {json_str}
 
