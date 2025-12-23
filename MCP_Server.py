@@ -3,6 +3,8 @@ from typing import Optional, Dict, Any, List
 import json
 import re
 from langdetect import detect, DetectorFactory
+import asyncio
+from functools import wraps
 
 # Import from existing modules
 from status_extractor import (
@@ -27,7 +29,7 @@ DIGIT_MAPPINGS = {
     'दो': '2', 'do': '2',
     'तीन': '3', 'teen': '3', 'tin': '3',
     'चार': '4', 'char': '4', 'chaar': '4',
-    'पाँच': '5', 'paanch': '5', 'panch': '5', 'punch': '5',
+    'पांच': '5', 'paanch': '5', 'panch': '5', 'punch': '5',
     'छह': '6', 'chhah': '6', 'chha': '6', 'chhe': '6',
     'सात': '7', 'saat': '7', 'sat': '7',
     'आठ': '8', 'aath': '8', 'ath': '8',
@@ -37,6 +39,15 @@ DIGIT_MAPPINGS = {
 }
 
 DIGIT_MAPPING_LOWER = {k.lower(): v for k, v in DIGIT_MAPPINGS.items()}
+
+
+def run_sync(func):
+    """Decorator to run sync functions in async context"""
+    @wraps(func)
+    async def wrapper(*args, **kwargs):
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(None, lambda: func(*args, **kwargs))
+    return wrapper
 
 
 def detect_language(text: str) -> str:
@@ -106,9 +117,9 @@ def get_or_create_session(session_id: str) -> Dict[str, Any]:
 
 
 @mcp.tool()
-def check_pnr_status(
+async def check_pnr_status(
     pnr_number: str,
-    method: str = "combined"
+    method: str = "api"  # Changed to "api" for cloud deployment
 ) -> Dict[str, Any]:
     """
     Check Indian Railway PNR status
@@ -128,12 +139,15 @@ def check_pnr_status(
         }
     
     try:
+        # Run blocking IO in executor
+        loop = asyncio.get_event_loop()
+        
         if method == "api":
-            result = check_pnr_rapidapi(pnr_number)
+            result = await loop.run_in_executor(None, check_pnr_rapidapi, pnr_number)
         elif method == "automation":
-            result = check_pnr_automation(str(pnr_number))
+            result = await loop.run_in_executor(None, check_pnr_automation, str(pnr_number))
         else:  # combined
-            result = check_pnr_combined(pnr_number)
+            result = await loop.run_in_executor(None, check_pnr_combined, pnr_number)
         
         if result:
             return {
@@ -154,7 +168,7 @@ def check_pnr_status(
 
 
 @mcp.tool()
-def generate_summary(
+async def generate_summary(
     pnr_data: Dict[str, Any],
     language: str = "english",
     conversation_history: Optional[List[Dict]] = None
@@ -171,7 +185,14 @@ def generate_summary(
         Human-friendly summary of the ticket status
     """
     try:
-        summary = generate_pnr_summary(pnr_data, language, conversation_history)
+        loop = asyncio.get_event_loop()
+        summary = await loop.run_in_executor(
+            None, 
+            generate_pnr_summary, 
+            pnr_data, 
+            language, 
+            conversation_history
+        )
         return summary
     except Exception as e:
         return f"Error generating summary: {str(e)}"
@@ -312,7 +333,7 @@ def get_session_history(session_id: str, limit: int = 10) -> Dict[str, Any]:
 
 
 @mcp.tool()
-def check_and_summarize(
+async def check_and_summarize(
     pnr_number: str,
     language: str = "english",
     session_id: Optional[str] = None
@@ -329,14 +350,14 @@ def check_and_summarize(
         Dictionary with PNR data and natural language summary
     """
     # Check status
-    status_result = check_pnr_status(pnr_number)
+    status_result = await check_pnr_status(pnr_number)
     
     if not status_result["success"]:
         return status_result
     
     # Generate summary
     pnr_data = status_result["data"]
-    summary = generate_summary(pnr_data, language)
+    summary = await generate_summary(pnr_data, language)
     
     # Update session if provided
     if session_id:
@@ -379,5 +400,23 @@ def get_server_info() -> str:
 
 
 if __name__ == "__main__":
-    # Run the MCP server
-    mcp.run(transport="streamable-http", host="0.0.0.0", port=3001)
+    # Run the MCP server with streamable-http transport
+    # For local testing, use stdio transport instead
+    import sys
+    
+    # Check if running with specific transport
+    transport = "stdio"  # default
+    if len(sys.argv) > 1:
+        if sys.argv[1] in ["http", "streamable-http", "stdio"]:
+            transport = sys.argv[1]
+    
+    if transport == "stdio":
+        print("Running MCP server with stdio transport (for local testing)", file=sys.stderr)
+        mcp.run(transport="stdio")
+    else:
+        print(f"Running MCP server with {transport} transport", file=sys.stderr)
+        mcp.run(
+            transport=transport,
+            host="0.0.0.0",
+            port=3001
+        )
