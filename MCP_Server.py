@@ -380,4 +380,4 @@ def get_server_info() -> str:
 
 if __name__ == "__main__":
     # Run the MCP server
-    mcp.run(transport="http", host="0.0.0.0", port=8000)
+    mcp.run(transport="streamable-http", host="0.0.0.0", port=3001)
