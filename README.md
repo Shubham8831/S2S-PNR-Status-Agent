@@ -6,7 +6,7 @@ An AI-powered multilingual voice assistant for checking Indian Railway PNR (Pass
 
 ## 🎥 Demo
 
-Check out our [demo video]([demo.mp4](https://github.com/Shubham8831/S2S-PNR-Status-Agent/raw/main/demo_video.mp4)) to see the assistant in action!
+Check out our [demo video](https://github.com/Shubham8831/S2S-PNR-Status-Agent/raw/main/demo_video.mp4) to see the assistant in action!
 
 ## ✨ Features
 
